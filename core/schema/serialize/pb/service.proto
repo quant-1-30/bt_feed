@@ -1,0 +1,160 @@
+syntax="proto3";
+
+import "google/protobuf/empty.proto";
+
+
+// optional string title [(max_length) = 512];
+// int32 old_field = 6 [deprecated = true];
+// reserved 6; reserved old_field
+
+// base frame
+
+message Calendar {
+  string tz_info = 1;
+  repeated int32 date = 2;
+}
+
+message Instrument {
+  string sid = 1;
+  string name = 2;
+  int32 first_trading = 3;
+  int32 delist = 4 ;
+}
+
+message  Line {
+  string sid = 1;
+  int32 open = 2;
+  int32 high = 3;
+  int32 low = 4;
+  int32 close = 5;
+  int64 volume = 6;
+  int64 amount = 7;
+}
+
+message Adjustment {
+  string sid = 1;
+  int32 register_date = 2;
+  int32 ex_date = 3;
+  int32 share = 4;
+  int32 transfer = 5;
+  int32 interest = 6;
+}
+
+message Rightment {
+  string sid = 1;
+  int32 register_date = 2;
+  int32 ex_date = 3;
+  int32 price = 4;
+  int32 ratio = 5;
+}
+
+message Order {
+  string sid = 1;
+  string order_id = 2;
+  string order_type = 3;
+  int32 created_at = 4;
+  int32 order_price = 5;
+  int32 order_volume = 6;
+}
+
+message Transaction {
+  string sid = 1;
+  int32 created_at = 2;
+  int32 trade_price = 3;
+  int32 market_price = 4;
+  int32 volume = 5;
+  int32 cost = 6;
+}
+
+message Experiment {
+   string user_id = 1;
+   string experiment_id = 2;
+   string account_id = 3;
+}
+
+message Account {
+  int32 date = 1;
+  string positions = 2;
+  int32 portfolio = 3;
+  int32 cash = 4;
+}
+
+// struct frame
+
+message InstFrame {
+  repeated Instrument asset = 1;
+}
+
+message TickerFrame {
+   int32 ticker = 1;
+   repeated Line line = 2; 
+}
+
+message AdjFrame {
+   int32 date = 1;
+   repeated Adjustment adj = 2; 
+}
+
+message RightmentFrame {
+   int32 date = 1;
+   repeated Rightment rgt = 2; 
+}
+
+message OrderFrame {
+   int32 date = 1;
+   repeated  Order ord = 2; 
+}
+
+message TransactionFrame {
+   int32 date = 1;
+   repeated Transaction txn = 2; 
+}
+
+message AccountFrame {
+   int32 date=1;
+   repeated Account account = 2; 
+}
+
+// req 
+message QuoteRequest {
+  int32 start_date = 1;
+  int32 end_date = 2;
+  repeated string sid = 3;
+}
+
+message TradeRequest {
+  int32 start_date = 1;
+  int32 end_date = 2;
+  repeated string sid = 3;
+  optional Experiment experiment = 4;
+}
+
+message PersistRequest {
+  // key_type can be any integral or string type 
+  // value_type can be any type except anotssher map.
+  // map<string, string> body = 1; 
+  map<string, bytes> body = 1; 
+  optional Experiment experiment = 2;
+}
+
+// response
+
+message Status {
+  int32 status = 1;
+  string error = 2;
+}
+
+// api
+
+service btSimulator {
+    rpc CalendarCall(google.protobuf.Empty) returns (Calendar);
+    rpc InstrumentCall (QuoteRequest) returns (InstFrame);
+    rpc DatasetStreamCall (QuoteRequest) returns (stream TickerFrame);
+    rpc AdjustmentStreamCall (QuoteRequest) returns (stream AdjFrame);
+    rpc RightStreamCall (QuoteRequest) returns (stream RightmentFrame);
+    rpc OrderStreamCall (TradeRequest) returns (stream OrderFrame);
+    rpc TransactionStreamCall (TradeRequest) returns (stream TransactionFrame);
+    rpc ExperimentStreamCall (TradeRequest) returns (stream Experiment);
+    rpc AccountStreamCall (TradeRequest) returns (stream AccountFrame);
+    rpc PersistStreamCall (stream PersistRequest)  returns (stream Status);
+}
