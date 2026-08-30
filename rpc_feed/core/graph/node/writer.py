@@ -5,7 +5,6 @@ import io
 import re
 import asyncio
 import datetime
-import warnings
 import sys
 import avro.schema
 import pandas as pd
@@ -36,11 +35,11 @@ class AvroWriter(Node):
 
     async def next(self, meta: pd.DataFrame) -> Any:
         # ticker.avsc
-        schema = avro.schema.parse(open(self.p.schema_path, "rb").read())
-        writer = DataFileWriter(open(self.p.data_path, "wb"), DatumWriter(), schema)
-        for element in meta.to_dict("records"): # column: value
-            writer.append(element)
-        writer.close()
+        with open(self.p.schema_path, "rb") as sf:
+            schema = avro.schema.parse(sf.read())
+        with DataFileWriter(open(self.p.data_path, "wb"), DatumWriter(), schema) as writer:
+            for element in meta.to_dict("records"): # column: value
+                writer.append(element)
 
 
 @registry
@@ -133,7 +132,9 @@ class WriterStringIO(Node):
     params = (
         ('fd', io.StringIO),
         ("is_writer", True),
-        ("is_async", True)
+        # next() is sync: the engine would `await` it and swallow the TypeError,
+        # so run it through the executor path instead
+        ("is_async", False)
         )
 
     def __init__(self):
@@ -169,17 +170,20 @@ class PgWriter(Node):
         ("is_writer", True),
         ("is_async", True)
     )
-    
+
+    def __init__(self):
+        # fail fast instead of hitting AttributeError on AsyncOps.on_update /
+        # on_delete (they don't exist) and silently dropping the write
+        if self.p.mode != "insert":
+            raise ValueError(
+                f"PgWriter: mode={self.p.mode!r} is not implemented "
+                f"(AsyncOps has no on_update/on_delete); only 'insert' works"
+            )
+
     async def next(self, meta: Union[pd.DataFrame, List[dict], dict]):
         async with async_ops as ctx:
             try:
-                if self.p.mode == "insert":
-                    await ctx.on_insert(self.p.table, meta)
-                elif self.p.mode == "update":
-                    await ctx.on_update(self.p.table, meta)
-                else:
-                    warnings.warn(f"PgWriter: {self.p.mode} is dangerous, please confirm")
-                    await ctx.on_delete(self.p.table, meta)
+                await ctx.on_insert(self.p.table, meta)
                 status = {"status": 0, "error": ""}
             except Exception as e:
                 print("PgWriter Error", e)
@@ -235,14 +239,16 @@ class ParquetWriter(Node):
         return pa.schema(data_fields+partition_fields), pa.schema(partition_fields)
     
     def _make_partition(self, meta: pd.DataFrame) -> pd.DataFrame:
-        meta["year"] = meta["datetime"].apply(lambda x: str(x.year))
-        meta["quarter"] = meta['datetime'].apply(lambda x: f'Q{((x.month - 1) // 3) + 1}')
+        # vectorized dt accessors replace per-row apply (identical values, C speed)
+        dt = meta["datetime"]
+        meta["year"] = dt.dt.year.astype(str)
+        meta["quarter"] = "Q" + dt.dt.quarter.astype(str)  # quarter == (month-1)//3 + 1
         # meta["sid"] = meta["sid"].apply(lambda x: re.sub(r'[a-zA-Z\.]', '', x)) # 全局替换 2A01 -> 2021
         meta["sid"] = meta["sid"].str.replace(r'^[a-zA-Z]+\.|\.[a-zA-Z]+$', '', regex=True)
-        meta["date"] = meta["datetime"].dt.strftime("%Y%m") # apply(lambda x: f"{x.month:02d}")
+        meta["date"] = dt.dt.strftime("%Y%m") # apply(lambda x: f"{x.month:02d}")
 
         # 北京时区 -> UTC -> 剥离时区标签
-        meta["datetime"] = meta["datetime"].dt.tz_localize("Asia/Shanghai").dt.tz_convert("UTC").dt.tz_localize(None)
+        meta["datetime"] = dt.dt.tz_localize("Asia/Shanghai").dt.tz_convert("UTC").dt.tz_localize(None)
         return meta
 
     def _write_parquet(

@@ -1,100 +1,109 @@
+#! /usr/bin/env python3
+
 import os
-import shutil
+import duckdb
 import tempfile
-import pandas as pd
-import pyarrow as pa
-import pyarrow.dataset as ds
+from pathlib import Path
+from dotenv import load_dotenv
 import pyarrow.parquet as pq
 
-from dotenv import load_dotenv
-from pathlib import Path
+
+def _strip(path) -> str:
+    """single-quote a path for inlining into SQL"""
+    return str(path).replace("'", "''")
+
+
+def _merge_sql(target_file: Path, staging_glob: Path) -> str:
+    if target_file.exists():
+        source = f"""
+            SELECT *, 1 AS __pri FROM read_parquet('{_strip(staging_glob)}', hive_partitioning=false)
+            UNION ALL BY NAME
+            SELECT *, 0 AS __pri FROM read_parquet('{_strip(target_file)}', hive_partitioning=false)
+        """
+        qualify = "QUALIFY row_number() OVER (PARTITION BY tick ORDER BY __pri DESC) = 1"
+    else:
+        source = f"SELECT *, 0 AS __pri FROM read_parquet('{_strip(staging_glob)}', hive_partitioning=false)"
+        qualify = "QUALIFY row_number() OVER (PARTITION BY tick) = 1"
+
+    return f"SELECT * EXCLUDE (__pri) FROM ({source}) {qualify} ORDER BY tick"
+
 
 def compact_and_merge():
-    source_path = Path(os.getenv("SpiderDataset")).expanduser()
-    target_path = Path(os.getenv("SyncDataset")).expanduser()
+    src_env = os.getenv("SpiderDataset")
+    tgt_env = os.getenv("SyncDataset")
+    if not src_env or not tgt_env:
+        print("Error: SpiderDataset or SyncDataset environment variable is not set.")
+        return
+
+    source_path = Path(src_env).expanduser()
+    target_path = Path(tgt_env).expanduser()
 
     if not source_path.exists():
-        print(f"Souce root {source_path} does not exist. Nothing to compact.")
+        print(f"Source root {source_path} does not exist. Nothing to compact.")
         return
 
     # source_path/year=2026/quarter=Q2/sid=300059/date=202606
-    sub_dirs = set(f.parent for f in source_path.rglob("*.parquet"))
-    
+    sub_dirs = sorted(set(f.parent for f in source_path.rglob("*.parquet")))
     if not sub_dirs:
         print("No new parquet files found in staging.")
         return
 
+    con = duckdb.connect()
+    con.execute("SET preserve_insertion_order=true;")
+
     for sdir in sub_dirs:
-        rel_path = sdir.relative_to(source_path) # key
+        staging_files = list(sdir.glob("*.parquet"))
+        if not staging_files:
+            continue
+
+        rel_path = sdir.relative_to(source_path)
         tdir = target_path / rel_path
+        tdir.mkdir(parents=True, exist_ok=True)
 
         print(f"Processing partition: {rel_path}")
 
-        # all reck parquet
-        all_table = ds.dataset(sdir, format="parquet").to_table()
-        df = all_table.to_pandas()
-
-        # aggregate exist parquet
         target_file = tdir / "part-0.parquet"
-        if target_file.exists():
-            df_target = pq.read_table(target_file).to_pandas()
-            df_combined = pd.concat([df_target, df], ignore_index=True)
-        else:
-            df_combined = df
+        staging_glob = sdir / "*.parquet"  # 👈 补充通配符
+        merge_sql = _merge_sql(target_file, staging_glob)
 
-        df_combined = df_combined.drop_duplicates(subset=['tick'], keep='last')
-        df_combined = df_combined.sort_values('tick').reset_index(drop=True)
+        lake_schema = pq.read_schema(staging_files[0])
 
-        fields = []
-        for col in df_combined.columns:
-            if col == "datetime":
-                fields.append(pa.field(col, pa.timestamp("ms", tz="UTC")))
-            else:
-                fields.append(pa.field(col, pa.from_numpy_dtype(df_combined[col].dtype)))
-        schema = pa.schema(fields)
-
-        tdir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=tdir, prefix="compacting_", suffix=".parquet")
+        os.close(fd)
+        temp_file_path = Path(tmp_name)
         
-        with tempfile.NamedTemporaryFile(
-            dir=tdir, 
-            prefix="compacting_", 
-            suffix=".parquet", 
-            delete=False
-        ) as tmp:
-            temp_file_path = Path(tmp.name)
-            try:
-                final_table = pa.Table.from_pandas(df_combined, schema=schema, preserve_index=False)
-                pq.write_table(final_table, temp_file_path)
-                
-                tmp.close()
-                # atomic replace 
-                temp_file_path.replace(target_file)
-            except Exception as e:
-                if temp_file_path.exists():
-                    temp_file_path.unlink()
-                raise e
-            finally:
-                tmp.close()
+        try:
+            merged = con.execute(merge_sql).fetch_arrow_table()
+            merged = merged.select(lake_schema.names).cast(lake_schema)
+            written = merged.num_rows
+            pq.write_table(merged, temp_file_path, compression="snappy")
+            # 原子替换
+            temp_file_path.replace(target_file)
+        except Exception:
+            temp_file_path.unlink(missing_ok=True)
+            raise
 
-        for f in sdir.glob("*.parquet"):
-            f.unlink()
-        print(f" -> Merged {len(df_combined)} rows into {target_file}")
+        # 成功后再清理 staging 文件
+        for f in staging_files:
+            f.unlink(missing_ok=True)
+            
+        print(f" -> Merged {written} rows into {target_file}")
 
-    # cleanup_empty_dirs(source_path)
+    cleanup_empty_dirs(source_path)
     print("Compaction finished successfully.")
 
+
 def cleanup_empty_dirs(path: Path):
-    if not path.is_dir():
+    if not path.exists():
         return
-    for sub in path.iterdir():
-        if sub.is_dir():
-            cleanup_empty_dirs(sub)
-    if not any(path.iterdir()):
-        path.rmdir()
+    for p in sorted(path.rglob("*"), reverse=True):
+        if p.is_dir() and not any(p.iterdir()):
+            try:
+                p.rmdir()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
-
     load_dotenv()
-
     compact_and_merge()

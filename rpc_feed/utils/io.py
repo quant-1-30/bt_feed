@@ -19,7 +19,6 @@ from typing import Callable, Generator
 from errno import EEXIST
 from os.path import exists, expanduser, join
 from shutil import move, rmtree
-from distutils import dir_util
 
 from .wrapper import registry
 
@@ -463,7 +462,8 @@ class working_dir(object):
     def _commit(self):
         """Sync the temporary directory to the final path.
         """
-        dir_util.copy_tree(self.path, self._final_path)
+        # distutils was removed in Python 3.12; shutil.copytree(dirs_exist_ok) replaces dir_util.copy_tree
+        shutil.copytree(self.path, self._final_path, dirs_exist_ok=True)
 
     def __enter__(self):
         return self

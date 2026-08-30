@@ -81,6 +81,19 @@ class Graph(object):
         if not nx.is_directed_acyclic_graph(G):
             raise ValueError("Graph configuration is not a DAG")
 
+        # the executor runs nodes as one linear chain (each node feeds the next,
+        # see run_sync_pipeline_local); anything but a simple path would silently
+        # misroute data through the wrong transforms
+        fan_out = [n for n in G.nodes if G.out_degree(n) > 1]
+        fan_in = [n for n in G.nodes if G.in_degree(n) > 1]
+        disconnected = G.number_of_edges() != G.number_of_nodes() - 1
+        if fan_out or fan_in or disconnected:
+            raise ValueError(
+                "graph must be a single linear chain (A->B->C->...): "
+                f"fan-out at {fan_out}, fan-in at {fan_in}, "
+                f"edges={G.number_of_edges()} nodes={G.number_of_nodes()} (disconnected nodes)"
+            )
+
         topological_order = list(nx.topological_sort(G))
         print(f"Build graph with topological order: {topological_order}")
 
@@ -92,6 +105,12 @@ class Graph(object):
             if not node_obj.p.is_writer:
                 self.graph.append(node_item)
             else:
+                if self.w_node is not None:
+                    # a second writer would silently overwrite the first and lose its data
+                    raise ValueError(
+                        "multiple writer nodes are not supported: "
+                        f"{type(self.w_node.instance).__name__} and {node_id}"
+                    )
                 self.w_node = node_item
         
         if not self.w_node:
@@ -116,9 +135,12 @@ class Graph(object):
             
             try:
                 if instance.p.is_async:
-                    await instance.next(item) # may raise exception, should be caught to avoid worker crash
+                    result = await instance.next(item) # may raise exception, should be caught to avoid worker crash
                 else:
-                    await self.loop.run_in_executor(None, instance.next, item)
+                    result = await self.loop.run_in_executor(None, instance.next, item)
+                # writers like PgWriter report failures via {"status": 1, ...} instead of raising
+                if isinstance(result, dict) and result.get("status"):
+                    print(f"Writer reported failure: {result.get('error')}")
             except Exception as e:
                 print(f"Error in consumer worker {item} encounter: {e}")
             finally:

@@ -19,8 +19,7 @@ import logging
 import uvloop
 from concurrent.futures import ThreadPoolExecutor
 from core.rpc.server import RpcServer
-from core.gateway import async_ops
-from core.gateway.duckdb.operator import get_duckdb_manager
+from core.gateway import async_ops, get_duckdb_manager
 
 from bt_protocol.serialize.pb import bt_protocol_service_pb2_grpc
 
@@ -54,6 +53,8 @@ async def serve() -> None:
 
     # initialize grpc server
     address = os.getenv("GRPC_SERVER")
+    if not address:
+        raise RuntimeError("GRPC_SERVER env var is not set (expected host:port)")
     MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", 64 * 1024 * 1024))
 
     server_options = [
@@ -86,43 +87,72 @@ async def serve() -> None:
     #     logging.info("  %s = %r", k, v)
 
     max_workers = int(os.getenv("GRPC_MAX_WORKERS", "16"))
+    # Arrow IPC payload is already lz4-compressed; a server-wide gzip pass costs
+    # CPU for ~zero ratio. Opt in with GRPC_COMPRESSION=gzip if a WAN link needs it.
+    compression = (
+        grpc.Compression.Gzip
+        if os.getenv("GRPC_COMPRESSION", "none").lower() == "gzip"
+        else grpc.Compression.NoCompression
+    )
     server = grpc.aio.server(
         ThreadPoolExecutor(max_workers=max_workers),
-        compression=grpc.Compression.Gzip, 
+        compression=compression,
         options=server_options,
         interceptors=[]
     )
     bt_protocol_service_pb2_grpc.add_btDataFeedServicer_to_server(RpcServer(), server)
-    server.add_insecure_port(address)
+    bound_port = server.add_insecure_port(address)
+    if bound_port == 0:
+        # 0 means bind failure; without this check the server "starts" but never listens
+        raise RuntimeError(f"gRPC failed to bind {address!r} (port in use or bad address?)")
     await server.start()
     logging.info("Server serving at %s", address)
 
+    # ---------------------------------------- recycle --------------------------------------
+
+    shutdown_task = None
     stop_event = asyncio.Event()
 
-    async def shutdown():
-        # release PG and DuckDB connection pool
-        logging.info("Cleaning up resources before shutdown...")
+    async def shutdown(grace: int = 5):
+        logging.info(f"Stopping server with grace period ({grace}s)...")
+        # 1. wait for gRPC/Web Server finish
+        try:
+            await server.stop(grace=grace)
+        except Exception as e:
+            logging.warning(f"Server stop error: {e}")
+
+        # 2. release async conn
+        logging.info("Cleaning up database connections...")
         try:
             await async_ops.cleanup()
         except Exception as e:
             logging.warning(f"AsyncOps cleanup error: {e}")
+            
         try:
-            # DuckDBManager 委托 ConnectionPool.close_all() 释放所有连接
             duck_mgr.connection_pool.close_all()
         except Exception as e:
             logging.warning(f"DuckDB cleanup error: {e}")
-        
-        await server.stop(grace=5)    
+
+        # 3. wait for event
         stop_event.set()
 
-    loop = asyncio.get_running_loop()
-    
-    def handle_signal():
-        print("Received signal", signal.SIGINT)
-        asyncio.create_task(shutdown())
+    def handle_signal(sig):
+        nonlocal shutdown_task
+        sig_name = getattr(sig, 'name', str(sig))
+        logging.info(f"Received signal {sig_name}")
 
-    loop.add_signal_handler(signal.SIGINT, handle_signal)
-    loop.add_signal_handler(signal.SIGTERM, handle_signal)
+        # second time
+        if shutdown_task is not None and not shutdown_task.done():
+            logging.warning("Forcing immediate shutdown...")
+            force_task = asyncio.create_task(server.stop(grace=0))
+            return
+
+        # first_time
+        shutdown_task = asyncio.create_task(shutdown())
+
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, lambda: handle_signal(signal.SIGINT))
+    loop.add_signal_handler(signal.SIGTERM, lambda: handle_signal(signal.SIGTERM))
 
     await stop_event.wait()
     logging.info("Server has been shut down.")

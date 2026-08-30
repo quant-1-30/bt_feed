@@ -39,6 +39,8 @@ def init_worker(serialized_configs: List[Tuple[str, Dict]]):
             _WORKER_PIPELINE.append(inst)
         except Exception as e:
             print(f"❌ [Worker] 初始化节点 {node_type} 失败: {e}")
+            # a short pipeline would silently skip transformations -> fail fast
+            raise
 
     print(f"🚀 [Worker] PID {os.getpid()} 初始化完成，加载了 {len(_WORKER_PIPELINE)} 个节点")
 

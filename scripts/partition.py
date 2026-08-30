@@ -4,12 +4,13 @@
 
 import os
 import asyncio
-import psycopg
+import datetime
+import pytz
+from typing import Any
 from dotenv import load_dotenv
 from sqlalchemy import text
 from dateutil.relativedelta import relativedelta
-from rpc_feed.core.operator import async_ops
-from .pg_init import create_database
+from rpc_feed.core.gateway.pg.operator import async_ops
 
 
 def ensure_utc(dt: Any, tz="Asia/Shanghai", fmt="%Y-%m-%d") -> float:
@@ -62,7 +63,8 @@ async def create_partitions_by_quarter(start: str, end: str):
 
 
 async def sequential_execute(intervals):
-    await create_database()
+    # database/ORM tables are created by `AsyncOps._build_engine` on first use;
+    # the old `create_database()` helper (scripts/pg_init) no longer exists
     await create_partitions_by_quarter(*intervals)
 
 

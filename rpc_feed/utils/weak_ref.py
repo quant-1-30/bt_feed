@@ -4,7 +4,8 @@ Created on Tue Mar 12 15:37:47 2019
 
 @author: python
 """
-from collections import Sequence, OrderedDict
+from collections import OrderedDict
+from collections.abc import Sequence  # plain `collections` alias removed in Python 3.10
 from itertools import compress
 from weakref import WeakKeyDictionary, ref
 from threading import Lock
@@ -140,9 +141,6 @@ def weak_lru_cache(maxsize=100):
     return desc
 
 
-remember_last = weak_lru_cache(1)
-
-
 def _weak_lru_cache(maxsize=100):
     """
     Users should only access the lru_cache through its public API:
@@ -218,6 +216,11 @@ def _weak_lru_cache(maxsize=100):
         return wrapper
 
     return decorating_function
+
+
+# must stay below _weak_lru_cache: weak_lru_cache's class body references it
+# (used to sit above -> NameError at import once the collections.Sequence fix landed)
+remember_last = weak_lru_cache(1)
 
 
 class Lazyproperty:

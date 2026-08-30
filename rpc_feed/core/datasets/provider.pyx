@@ -15,7 +15,6 @@ from libcpp.string cimport string as cpp_string
 
 from rpc_feed.core.gateway.duckdb.utils cimport Request
 from rpc_feed.core.gateway import *
-from rpc_feed.utils.dateintern cimport intdt2ts
 
 from bt_protocol.serialize.pb import bt_protocol_service_pb2
 from bt_protocol.template.duckdb_template import *

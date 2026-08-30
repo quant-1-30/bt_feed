@@ -21,6 +21,10 @@ from .io import default_extension, ensure_file
 
 _loaded_extensions = set()
 
+# modules loaded via import_file(add_to_sys=True); import_file references this
+# through `global` but it was never defined -> NameError on first call
+CUSTOM_LOADED_MODULES = {}
+
 
 def import_name(name, package=None):
     module = importlib.import_module(name, package)
@@ -168,7 +172,7 @@ def load_extensions(default, extensions, strict, environ, reload=False):
         ensure_file(default_extension_path)
         # put the default extension first so other extensions can depend on
         # the order they are loaded
-        extensions = np.concatv([default_extension_path], extensions)
+        extensions = np.concatenate([[default_extension_path], extensions])
 
     for ext in extensions:
         if ext in _loaded_extensions and not reload:

@@ -171,14 +171,13 @@ xml/*.graphml → Graph._build_graph() → loky ProcessPool (Loader/Format)
 poetry run python setup.py build_ext --inplace
 ```
 
-编译 4 个扩展模块：
+编译 3 个扩展模块：
 
 | 模块 | 源文件 | 职责 |
 |------|--------|------|
 | `rpc_feed.core.datasets.provider` | `provider.pyx` | 数据提供者 + Buffer 容器 |
 | `rpc_feed.core.feed` | `feed.pyx` | BtFeed 门面 |
 | `rpc_feed.core.gateway.duckdb.utils` | `duckdb/utils.pyx` | 日期解析 + 分区展开 |
-| `rpc_feed.utils.dateintern` | `dateintern.pyx` | C 级时间戳转换 |
 
 编译选项：`-O3 -std=c++11`，Cython directives：`boundscheck=False`, `wraparound=False`, `cdivision=True`
 

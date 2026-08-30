@@ -35,11 +35,9 @@ class StructUnpacker(Node):
         with open(input_path, 'rb') as f:
             buf = f.read()
             size = int(len(buf) / self.p.buflen)
-            data = []
-            for num in range(size):
-                idx = self.p.buflen * num
-                line = struct.unpack(self.p.pack, buf[idx:idx + self.p.buflen])
-                data.append(line)
+            # iter_unpack keeps slicing + unpack in C instead of a python loop
+            # struct.calcsize(fmt) == buflen
+            data = list(struct.iter_unpack(self.p.pack, buf[:size * self.p.buflen]))
             frame = pd.DataFrame(data, columns=self.p.lines)
         # postprocess
         frame.drop(columns="appendix", inplace=True)

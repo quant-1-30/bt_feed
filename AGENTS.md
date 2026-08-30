@@ -55,7 +55,6 @@ rpc_feed/
 │       └── middleware/       # Auth/RateLimit 拦截器（当前未启用）
 └── utils/
     ├── context_tricks.py     # warning/临时目录上下文
-    ├── dateintern.pyx/.pxd   # Cython 高性能日期时间转换
     ├── io.py                 # 路径、glob、配置解析、build_from_cfg
     ├── loader.py             # 动态模块加载
     ├── weak_ref.py           # 弱引用 LRU 缓存
@@ -113,14 +112,13 @@ priority = "primary"
 poetry run python setup.py build_ext --inplace
 ```
 
-`setup.py` 会编译以下 4 个扩展：
+`setup.py` 会编译以下 3 个扩展：
 
 | 扩展模块 | 源文件 |
 |----------|--------|
 | `rpc_feed.core.datasets.provider` | `rpc_feed/core/datasets/provider.pyx` |
 | `rpc_feed.core.feed` | `rpc_feed/core/feed.pyx` |
 | `rpc_feed.core.gateway.duckdb.utils` | `rpc_feed/core/gateway/duckdb/utils.pyx` |
-| `rpc_feed.utils.dateintern` | `rpc_feed/utils/dateintern.pyx` |
 
 编译选项：
 
@@ -288,7 +286,6 @@ TextLoader     → PgWriter   (asset.graphml)
 
 ### 7.6 `utils/` — 通用工具
 
-- `dateintern.pyx`：C 级时间戳/日期转换，固定上海市场开盘/收盘偏移。
 - `io.py`：`build_from_cfg`（通过注册表反射构造节点）、`recursive_glob`、路径工具。
 - `wrapper.py`：`@singleton`、`@registry`、通用装饰器。
 - `weak_ref.py`：弱引用 LRU 缓存。

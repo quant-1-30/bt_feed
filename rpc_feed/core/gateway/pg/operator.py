@@ -192,8 +192,14 @@ class AsyncOps:
             
     async def on_delete_obj(self, query: Select):
         async with self.get_db() as session:
-            async with session.begin(): 
+            async with session.begin():
                 await session.execute(query)
+
+    async def on_execute(self, stmt, params=None):
+        """Execute a raw/DDL statement (text() or Select) with no result rows expected."""
+        async with self.get_db() as session:
+            async with session.begin():
+                await session.execute(stmt, params=params)
 
     async def __aexit__(self, exc_type, exc_value, traceback): # bool
             if exc_type is not None:

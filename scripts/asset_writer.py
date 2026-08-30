@@ -63,9 +63,8 @@ def writer_asset():
     df["name"] = df["name"].str.encode("utf-8")
     dup_values = df.loc[df["sid"].duplicated(), "sid"]
     print("dup_values: ", len(dup_values))
-    # NaN ---> Python None 
+    # NaN ---> Python None
     df_clean = df.astype(object).where(df.notna(), None)
-    import pdb; pdb.set_trace()
     return df_clean
 
 
