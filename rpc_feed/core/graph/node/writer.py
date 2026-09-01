@@ -240,15 +240,24 @@ class ParquetWriter(Node):
     
     def _make_partition(self, meta: pd.DataFrame) -> pd.DataFrame:
         # vectorized dt accessors replace per-row apply (identical values, C speed)
+        # pandas 2.1.x BlockManager occur  _blknos and blocks bug
+        #  assign avoid inplace modification of the original DataFrame, which can lead to unexpected behavior in subsequent operations.
         dt = meta["datetime"]
-        meta["year"] = dt.dt.year.astype(str)
-        meta["quarter"] = "Q" + dt.dt.quarter.astype(str)  # quarter == (month-1)//3 + 1
-        # meta["sid"] = meta["sid"].apply(lambda x: re.sub(r'[a-zA-Z\.]', '', x)) # 全局替换 2A01 -> 2021
-        meta["sid"] = meta["sid"].str.replace(r'^[a-zA-Z]+\.|\.[a-zA-Z]+$', '', regex=True)
-        meta["date"] = dt.dt.strftime("%Y%m") # apply(lambda x: f"{x.month:02d}")
+        year = dt.dt.year.astype(str)  # quarter == (month-1)//3 + 1
+        quarter = "Q" + dt.dt.quarter.astype(str)
+        # 2A01 -> 2021
+        sid = meta["sid"].str.replace(r'^[a-zA-Z]+\.|\.[a-zA-Z]+$', '', regex=True)
+        date = dt.dt.strftime("%Y%m")
 
-        # 北京时区 -> UTC -> 剥离时区标签
-        meta["datetime"] = dt.dt.tz_localize("Asia/Shanghai").dt.tz_convert("UTC").dt.tz_localize(None)
+        # -> UTC 
+        datetime_utc = (
+            dt.dt.tz_localize("Asia/Shanghai")
+            .dt.tz_convert("UTC")
+            .dt.tz_localize(None)
+        )
+        meta = meta.assign(
+            year=year, quarter=quarter, sid=sid, date=date, datetime=datetime_utc
+        )
         return meta
 
     def _write_parquet(

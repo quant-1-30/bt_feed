@@ -348,8 +348,7 @@ poetry run python rpc_feed/run_server.py
 
 ### 10.2 功能缺口 / 潜在 Bug
 
-- `CalendarCall` RPC 映射到未注册的 `"calendar"` provider。
-- `TextLoader.prenext()` 中 `f.readlines` 缺少 `()`。
+- `CalendarCall` RPC 映射到未注册的 `"calendar"` provider。- `TextLoader.prenext()` 中 `f.readlines` 缺少 `()`。
 - `AvroWriter.next()` 语法错误：`open(self.p.data_path), "wb"` 括号不匹配；`dicts.values` 缺少 `()`。
 - `ParquetWriter.next()` 是 `async def`，但直接调用同步 `_write_parquet()`，未使用 `run_in_executor`/`to_thread`。
 - `PgWriter` 支持 `update`/`delete` 模式，但 `AsyncOps` 只有 `on_insert`/`on_query`，没有 `on_update`/`on_delete`。

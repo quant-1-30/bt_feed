@@ -142,7 +142,7 @@ class Graph(object):
                 if isinstance(result, dict) and result.get("status"):
                     print(f"Writer reported failure: {result.get('error')}")
             except Exception as e:
-                print(f"Error in consumer worker {item} encounter: {e}")
+                print(f"Error in consumer worker on {type(item).__name__} encounter: {e!r}")
             finally:
                 self.queue.task_done()
 
